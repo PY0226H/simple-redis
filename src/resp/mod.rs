@@ -131,3 +131,9 @@ impl DerefMut for RespMap {
         &mut self.0
     }
 }
+
+impl Default for RespMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}

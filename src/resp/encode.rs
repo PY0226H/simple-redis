@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 use crate::resp::{
     BulkString, RespArray, RespEncode, RespFrame, RespMap, RespNull, RespNullArray,
     RespNullBulkString, RespSet, SimpleError, SimpleString,
