@@ -1,23 +1,25 @@
-#[allow(unused_imports)]
-use crate::resp::{
-    BulkString, RespArray, RespEncode, RespFrame, RespMap, RespNull, RespNullArray,
-    RespNullBulkString, RespSet, SimpleError, SimpleString,
+use crate::{
+    BulkString, RespArray, RespEncode, RespMap, RespNull, RespNullArray, RespNullBulkString,
+    RespSet, SimpleError, SimpleString,
 };
 
 const BUF_CAP: usize = 4096;
 
+// - simple string: "+OK\r\n"
 impl RespEncode for SimpleString {
     fn encode(self) -> Vec<u8> {
         format!("+{}\r\n", self.0).into_bytes()
     }
 }
 
+// - error: "-Error message\r\n"
 impl RespEncode for SimpleError {
     fn encode(self) -> Vec<u8> {
         format!("-{}\r\n", self.0).into_bytes()
     }
 }
 
+// - integer: ":[<+|->]<value>\r\n"
 impl RespEncode for i64 {
     fn encode(self) -> Vec<u8> {
         let sign = if self < 0 { "" } else { "+" };
@@ -25,6 +27,7 @@ impl RespEncode for i64 {
     }
 }
 
+// - bulk string: "$<length>\r\n<data>\r\n"
 impl RespEncode for BulkString {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(self.len() + 16);
@@ -35,12 +38,14 @@ impl RespEncode for BulkString {
     }
 }
 
+// - null bulk string: "$-1\r\n"
 impl RespEncode for RespNullBulkString {
     fn encode(self) -> Vec<u8> {
         b"$-1\r\n".to_vec()
     }
 }
 
+// - array: "*<number-of-elements>\r\n<element-1>...<element-n>"
 impl RespEncode for RespArray {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(BUF_CAP);
@@ -52,18 +57,28 @@ impl RespEncode for RespArray {
     }
 }
 
-impl RespEncode for RespNull {
+// - null array: "*-1\r\n"
+impl RespEncode for RespNullArray {
     fn encode(self) -> Vec<u8> {
-        b"\r\n".to_vec()
+        b"*-1\r\n".to_vec()
     }
 }
 
+// - null: "_\r\n"
+impl RespEncode for RespNull {
+    fn encode(self) -> Vec<u8> {
+        b"_\r\n".to_vec()
+    }
+}
+
+// - boolean: "#<t|f>\r\n"
 impl RespEncode for bool {
     fn encode(self) -> Vec<u8> {
         format!("#{}\r\n", if self { "t" } else { "f" }).into_bytes()
     }
 }
 
+// - double: ",[<+|->]<integral>[.<fractional>][<E|e>[sign]<exponent>]\r\n"
 impl RespEncode for f64 {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(32);
@@ -79,6 +94,8 @@ impl RespEncode for f64 {
     }
 }
 
+// - map: "%<number-of-entries>\r\n<key-1><value-1>...<key-n><value-n>"
+// we only support string key which encode to SimpleString
 impl RespEncode for RespMap {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(BUF_CAP);
@@ -91,6 +108,7 @@ impl RespEncode for RespMap {
     }
 }
 
+// - set: "~<number-of-elements>\r\n<element-1>...<element-n>"
 impl RespEncode for RespSet {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(BUF_CAP);
@@ -102,35 +120,33 @@ impl RespEncode for RespSet {
     }
 }
 
-impl RespEncode for RespNullArray {
-    fn encode(self) -> Vec<u8> {
-        b"*-1\r\n".to_vec()
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::RespFrame;
+
     use super::*;
 
     #[test]
     fn test_simple_string_encode() {
         let frame: RespFrame = SimpleString::new("OK".to_string()).into();
+
         assert_eq!(frame.encode(), b"+OK\r\n");
     }
 
     #[test]
-    fn test_simple_error_encode() {
-        let frame: RespFrame = SimpleError::new("ERR".to_string()).into();
-        assert_eq!(frame.encode(), b"-ERR\r\n");
+    fn test_error_encode() {
+        let frame: RespFrame = SimpleError::new("Error message".to_string()).into();
+
+        assert_eq!(frame.encode(), b"-Error message\r\n");
     }
 
     #[test]
     fn test_integer_encode() {
-        let frame: RespFrame = 100.into();
-        assert_eq!(frame.encode(), b":+100\r\n");
+        let frame: RespFrame = 123.into();
+        assert_eq!(frame.encode(), b":+123\r\n");
 
-        let frame: RespFrame = (-100).into();
-        assert_eq!(frame.encode(), b":-100\r\n");
+        let frame: RespFrame = (-123).into();
+        assert_eq!(frame.encode(), b":-123\r\n");
     }
 
     #[test]
@@ -154,7 +170,7 @@ mod tests {
         ])
         .into();
         assert_eq!(
-            frame.encode(),
+            &frame.encode(),
             b"*3\r\n$3\r\nset\r\n$5\r\nhello\r\n$5\r\nworld\r\n"
         );
     }
@@ -166,37 +182,9 @@ mod tests {
     }
 
     #[test]
-    fn test_map_encode() {
-        let mut map = RespMap::new();
-        map.insert(
-            "hello".to_string(),
-            BulkString::new("world".to_string()).into(),
-        );
-        map.insert("foo".to_string(), (-123456.789).into());
-        let frame: RespFrame = map.into();
-        assert_eq!(
-            frame.encode(),
-            b"%2\r\n+foo\r\n,-123456.789\r\n+hello\r\n$5\r\nworld\r\n"
-        );
-    }
-
-    #[test]
-    fn test_set_encode() {
-        let frame: RespFrame = RespSet::new([
-            RespArray::new([1234.into(), true.into()]).into(),
-            BulkString::new("world".to_string()).into(),
-        ])
-        .into();
-        assert_eq!(
-            frame.encode(),
-            b"~2\r\n*2\r\n:+1234\r\n#t\r\n$5\r\nworld\r\n"
-        );
-    }
-
-    #[test]
     fn test_null_encode() {
         let frame: RespFrame = RespNull.into();
-        assert_eq!(frame.encode(), b"\r\n");
+        assert_eq!(frame.encode(), b"_\r\n");
     }
 
     #[test]
@@ -221,5 +209,34 @@ mod tests {
 
         let frame: RespFrame = (-1.23456e-9).into();
         assert_eq!(&frame.encode(), b",-1.23456e-9\r\n");
+    }
+
+    #[test]
+    fn test_map_encode() {
+        let mut map = RespMap::new();
+        map.insert(
+            "hello".to_string(),
+            BulkString::new("world".to_string()).into(),
+        );
+        map.insert("foo".to_string(), (-123456.789).into());
+
+        let frame: RespFrame = map.into();
+        assert_eq!(
+            &frame.encode(),
+            b"%2\r\n+foo\r\n,-123456.789\r\n+hello\r\n$5\r\nworld\r\n"
+        );
+    }
+
+    #[test]
+    fn test_set_encode() {
+        let frame: RespFrame = RespSet::new([
+            RespArray::new([1234.into(), true.into()]).into(),
+            BulkString::new("world".to_string()).into(),
+        ])
+        .into();
+        assert_eq!(
+            frame.encode(),
+            b"~2\r\n*2\r\n:+1234\r\n#t\r\n$5\r\nworld\r\n"
+        );
     }
 }
